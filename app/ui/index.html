@@ -293,7 +293,11 @@
                 card.dataset.groupId = group.id;
                 card.dataset.status = group.status;
 
-                card.querySelector('.summary').textContent = group.analysis_report?.summary || group.representative_signature || 'No summary available.';
+                const summaryText = group.analysis_report?.summary ||
+                                  (group.sample_log && (group.sample_log.body || group.sample_log.message)) ||
+                                  group.representative_signature ||
+                                  'No summary available.';
+                card.querySelector('.summary').textContent = summaryText;
                 card.querySelector('.grouping-method').textContent = group.grouping_method;
                 
                 card.querySelector('.risk-score-container').appendChild(createRiskScoreRing(group.risk_score));
@@ -361,9 +365,23 @@
                         solutionList.appendChild(li);
                     });
                 } else {
-                    card.querySelector('.root-cause').parentElement.style.display = 'none';
-                    card.querySelector('.impact').parentElement.style.display = 'none';
-                    card.querySelector('.solution').parentElement.style.display = 'none';
+                    const rootCauseEl = card.querySelector('.root-cause');
+                    const impactEl = card.querySelector('.impact');
+                    const solutionList = card.querySelector('.solution');
+
+                    rootCauseEl.parentElement.style.display = 'block';
+                    impactEl.parentElement.style.display = 'block';
+                    solutionList.parentElement.style.display = 'block';
+
+                    rootCauseEl.textContent = 'AI analysis has not been performed. The following information is derived from log data.';
+
+                    impactEl.textContent = 'A log template (via Drain algorithm) has been identified for this group:';
+                    const pre = document.createElement('pre');
+                    pre.className = 'log-viewer mt-2';
+                    pre.innerHTML = `<code>${group.representative_signature}</code>`;
+                    impactEl.after(pre);
+
+                    solutionList.innerHTML = '<li>Review the "Original Log Details" and "Stack Trace" sections below for further investigation.</li>';
                 }
 
                 const toggle = card.querySelector('.non-issue-toggle');
