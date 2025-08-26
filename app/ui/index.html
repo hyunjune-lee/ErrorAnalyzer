@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error Analyzer PoC Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root { color-scheme: dark; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        .details-content { max-height: 0; overflow: hidden; transition: max-height 0.5s ease-in-out; }
+        .details-content.open { max-height: 1500px; }
+        .step { display: flex; flex-direction: column; align-items: center; color: #6b7280; transition: color 0.3s ease-in-out; }
+        .step-icon { width: 40px; height: 40px; border-radius: 50%; border: 2px solid #6b7280; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease-in-out; }
+        .step-label { margin-top: 8px; font-size: 0.75rem; font-weight: 500; }
+        .step.active .step-icon { animation: pulse 2s infinite; }
+        .step.completed .step-icon { background-color: #4ade80; border-color: #4ade80; color: #1f2937; }
+        .connector { flex-grow: 1; height: 2px; background-color: #6b7280; margin: 0 8px; transform: translateY(-12px); }
+        @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(96, 165, 250, 0); } }
+        .occurrence-bubble { display: flex; align-items: center; justify-content: center; border-radius: 50%; color: white; font-weight: bold; transition: all 0.3s ease; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+        .sparkline { stroke-width: 2; fill: none; }
+        .tab { cursor: pointer; padding: 8px 16px; border-bottom: 2px solid transparent; transition: all 0.3s ease; }
+        .tab.active { color: #60a5fa; border-bottom-color: #60a5fa; }
+        .tag-filter, .date-quick-filter { cursor: pointer; padding: 4px 12px; border-radius: 9999px; background-color: #374151; transition: all 0.3s ease; font-size: 0.875rem; }
+        .tag-filter.active, .date-quick-filter.active { background-color: #4f46e5; color: white; }
+        .log-viewer { background-color: #111827; border-radius: 8px; padding: 16px; max-height: 400px; overflow-y: auto; }
+        .risk-ring { transform: rotate(-90deg); }
+        .risk-ring-circle { transition: stroke-dashoffset 0.5s ease; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 font-sans antialiased">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8">
+        <header class="mb-8">
+            <h1 class="text-4xl font-bold text-white">Error Analyzer Dashboard</h1>
+            <p class="text-gray-400 mt-2">AI 기반 에러 그룹 분석 및 관리 대시보드</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg col-span-1 md:col-span-3">
+                <h2 class="text-xl font-semibold text-white mb-3">Pipeline Status</h2>
+                <div class="flex items-center space-x-4 mb-4">
+                    <div id="status-indicator" class="w-4 h-4 rounded-full bg-green-500"></div>
+                    <p id="current-status" class="text-gray-300">Pipeline Idle</p>
+                </div>
+                <div id="pipeline-steps" class="flex items-center w-full">
+                    <div class="step" id="step-fetch"><div class="step-icon">1</div><div class="step-label">Fetch Logs</div></div>
+                    <div class="connector"></div>
+                    <div class="step" id="step-process"><div class="step-icon">2</div><div class="step-label">Process</div></div>
+                    <div class="connector"></div>
+                    <div class="step" id="step-dispatch"><div class="step-icon">3</div><div class="step-label">Dispatch AI</div></div>
+                    <div class="connector"></div>
+                    <div class="step" id="step-done"><div class="step-icon">✓</div><div class="step-label">Done</div></div>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-2.5 mt-4"><div id="progress-bar" class="bg-indigo-600 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div></div>
+                <p class="text-xs text-gray-500 mt-2 text-right">Last updated: <span id="last-updated">N/A</span></p>
+            </div>
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg col-span-1 md:col-span-2 flex flex-col justify-center items-center">
+                 <button id="trigger-pipeline-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed">Manual Trigger Pipeline</button>
+                <p id="trigger-message" class="text-sm text-green-400 mt-2 h-4"></p>
+            </div>
+        </div>
+
+        <div class="bg-gray-800 p-4 rounded-lg mb-6 space-y-4">
+            <div class="flex flex-wrap items-center gap-4">
+                <span class="text-sm font-semibold text-gray-400">Filter by Date:</span>
+                <input type="datetime-local" id="start-date-filter" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+                <span class="text-gray-500">-</span>
+                <input type="datetime-local" id="end-date-filter" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+                <div id="date-quick-filters" class="flex items-center gap-2">
+                    <button class="date-quick-filter" data-hours="1">1H</button>
+                    <button class="date-quick-filter" data-hours="24">24H</button>
+                    <button class="date-quick-filter" data-hours="168">7D</button>
+                </div>
+                <button id="date-reset-btn" class="text-sm text-indigo-400 hover:text-indigo-300">Reset</button>
+            </div>
+             <div class="flex items-center space-x-2" id="tag-filter-container">
+                <span class="text-sm font-semibold text-gray-400 mr-2">Projects:</span>
+            </div>
+        </div>
+
+        <div class="mb-6">
+            <div class="flex justify-between items-center border-b border-gray-700">
+                <div class="flex" id="tabs-container">
+                    <div class="tab active" data-tab="active-issues">Active Issues</div>
+                    <div class="tab" data-tab="non-issues">Non-Issues</div>
+                </div>
+                <div class="flex items-center">
+                    <label for="sort-by-select" class="text-sm text-gray-400 mr-2">Sort by:</label>
+                    <select id="sort-by-select" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+                        <option value="risk_score">Risk Score</option>
+                        <option value="last_seen">Last Seen</option>
+                        <option value="occurrence_count">Occurrences</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div id="issues-content">
+            <div id="active-issues-list" class="space-y-4"></div>
+            <div id="non-issues-list" class="space-y-4 hidden"></div>
+        </div>
+    </div>
+
+    <template id="error-card-template">
+        <div class="bg-gray-800 rounded-lg shadow-md overflow-hidden transition duration-300 hover:shadow-xl hover:border-indigo-500 border-2 border-transparent" data-fingerprint="">
+            <div class="p-5 cursor-pointer" onclick="toggleDetails(this)">
+                <div class="flex justify-between items-start">
+                    <div class="flex-grow pr-4">
+                        <p class="font-semibold text-lg text-white summary"></p>
+                        <p class="text-sm text-gray-400 mt-1">Method: <span class="font-mono bg-gray-700 px-2 py-1 rounded-md text-xs grouping-method"></span></p>
+                    </div>
+                    <div class="flex items-center space-x-4 ml-auto">
+                        <div class="risk-score-container flex flex-col items-center"></div>
+                        <span class="status-badge text-xs font-medium mr-2 px-2.5 py-0.5 rounded-full"></span>
+                        <div class="flex flex-col items-end">
+                            <div class="occurrence-bubble"><span class="occurrence-count"></span></div>
+                            <div class="sparkline-container mt-2"></div>
+                            <p class="text-xs text-gray-500 mt-1">occurrences</p>
+                        </div>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-500 mt-3">Last seen: <span class="last-seen"></span></p>
+            </div>
+            <div class="details-content bg-gray-800/50">
+                <div class="border-t border-gray-700 p-5 space-y-4">
+                    <div><h4 class="font-semibold text-indigo-400 mb-2">Root Cause</h4><p class="text-sm text-gray-300 root-cause"></p></div>
+                    <div><h4 class="font-semibold text-indigo-400 mb-2">Impact Analysis</h4><p class="text-sm text-gray-300 impact"></p></div>
+                    <div><h4 class="font-semibold text-indigo-400 mb-2">Solution</h4><ul class="list-disc list-inside text-sm text-gray-300 space-y-1 solution"></ul></div>
+                    <div><h4 class="font-semibold text-indigo-400 mb-2">Original Log</h4><pre class="log-viewer"><code class="language-json original-log"></code></pre></div>
+                </div>
+            </div>
+            <div class="bg-gray-900/50 px-5 py-3 flex justify-end items-center border-t border-gray-700">
+                <label class="flex items-center cursor-pointer"><span class="mr-3 text-sm font-medium text-gray-300">Mark as Non-Issue</span><div class="relative"><input type="checkbox" class="sr-only non-issue-toggle" onchange="handleNonIssueToggle(this)"><div class="w-10 h-4 bg-gray-600 rounded-full shadow-inner"></div><div class="dot absolute w-6 h-6 bg-white rounded-full shadow -left-1 -top-1 transition"></div></div></label>
+            </div>
+        </div>
+    </template>
+    
+    <script>
+        const API_BASE_URL = '';
+        
+        // DOM Elements
+        const activeIssuesList = document.getElementById('active-issues-list');
+        const nonIssuesList = document.getElementById('non-issues-list');
+        const errorCardTemplate = document.getElementById('error-card-template');
+        const tabsContainer = document.getElementById('tabs-container');
+        const tagFilterContainer = document.getElementById('tag-filter-container');
+        const sortBySelect = document.getElementById('sort-by-select');
+        const startDateFilter = document.getElementById('start-date-filter');
+        const endDateFilter = document.getElementById('end-date-filter');
+        const dateQuickFilters = document.getElementById('date-quick-filters');
+        const dateResetBtn = document.getElementById('date-reset-btn');
+        const triggerPipelineBtn = document.getElementById('trigger-pipeline-btn');
+        const statusIndicator = document.getElementById('status-indicator');
+        const currentStatusEl = document.getElementById('current-status');
+        const lastUpdatedEl = document.getElementById('last-updated');
+        const progressBar = document.getElementById('progress-bar');
+        const pipelineSteps = { 
+            fetch: document.getElementById('step-fetch'), 
+            process: document.getElementById('step-process'), 
+            dispatch: document.getElementById('step-dispatch'), 
+            done: document.getElementById('step-done'), 
+        };
+        
+        let activeFilters = new Set();
+        let allGroups = [];
+        let isPipelineRunning = false;
+
+        const statusStyles = { 
+            'OPEN': 'bg-blue-900 text-blue-300', 
+            'ANALYZING': 'bg-yellow-900 text-yellow-300 animate-pulse', 
+            'ANALYZED': 'bg-green-900 text-green-300', 
+            'NON_ISSUE': 'bg-gray-700 text-gray-400' 
+        };
+        const pipelineStageConfig = { 
+            'FETCHING_LOGS': { step: 'fetch', progress: 25, text: 'Fetching logs...' }, 
+            'PROCESSING': { step: 'process', progress: 60, text: 'Processing and grouping logs...' }, 
+            'DISPATCHING': { step: 'dispatch', progress: 90, text: 'Dispatching new groups for AI analysis...' }, 
+            'DONE': { step: 'done', progress: 100, text: 'Pipeline finished.' } 
+        };
+
+        // Helper Functions
+        function getBubbleStyle(count, maxCount) { 
+            const minSize = 30, maxSize = 60; 
+            const minLightness = 50, maxLightness = 25; 
+            const scale = Math.log1p(count) / Math.log1p(maxCount || 1); 
+            const size = minSize + (maxSize - minSize) * scale; 
+            const lightness = minLightness - (minLightness - maxLightness) * scale; 
+            return `width: ${size}px; height: ${size}px; background-color: hsl(0, 70%, ${lightness}%); font-size: ${12 + 6 * scale}px;`; 
+        }
+
+        function createSparkline(data, width = 80, height = 25) { 
+            const svgNS = "http://www.w3.org/2000/svg"; 
+            const svg = document.createElementNS(svgNS, "svg"); 
+            svg.setAttribute("width", width); 
+            svg.setAttribute("height", height); 
+            svg.setAttribute("viewBox", `0 0 ${width} ${height}`); 
+            svg.classList.add("sparkline"); 
+            const max = Math.max(...data); 
+            const min = Math.min(...data); 
+            const range = max - min === 0 ? 1 : max - min; 
+            const points = data.map((d, i) => `${(i / (data.length - 1)) * width},${height - ((d - min) / range) * (height - 2) + 1}`).join(" "); 
+            const polyline = document.createElementNS(svgNS, "polyline"); 
+            polyline.setAttribute("points", points); 
+            polyline.style.stroke = data[data.length - 1] > data[0] ? "#f87171" : "#4ade80"; 
+            svg.appendChild(polyline); 
+            return svg; 
+        }
+
+        function createRiskScoreRing(score) { 
+            const size = 50; 
+            const strokeWidth = 5; 
+            const radius = (size / 2) - (strokeWidth * 2); 
+            const circumference = 2 * Math.PI * radius; 
+            const offset = circumference - (score / 100) * circumference; 
+            const hue = (1 - score / 100) * 120; 
+            const container = document.createElement('div'); 
+            container.className = 'relative'; 
+            container.innerHTML = `<svg class="risk-ring" width="${size}" height="${size}"><circle class="text-gray-700" stroke-width="${strokeWidth}" stroke="currentColor" fill="transparent" r="${radius}" cx="${size/2}" cy="${size/2}"/><circle class="risk-ring-circle" style="stroke: hsl(${hue}, 70%, 50%); stroke-dasharray:${circumference}; stroke-dashoffset:${offset};" stroke-width="${strokeWidth}" stroke-linecap="round" stroke="currentColor" fill="transparent" r="${radius}" cx="${size/2}" cy="${size/2}"/></svg><span class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-sm font-bold">${score}</span>`; 
+            return container; 
+        }
+
+        function updateToggleVisual(toggle) { 
+            const dot = toggle.nextElementSibling.nextElementSibling; 
+            if (toggle.checked) { 
+                toggle.nextElementSibling.classList.remove('bg-gray-600'); 
+                toggle.nextElementSibling.classList.add('bg-indigo-600'); 
+                dot.style.transform = 'translateX(100%)'; 
+            } else { 
+                toggle.nextElementSibling.classList.remove('bg-indigo-600'); 
+                toggle.nextElementSibling.classList.add('bg-gray-600'); 
+                dot.style.transform = 'translateX(0)'; 
+            } 
+        }
+
+        function toggleDetails(element) { 
+            const detailsContent = element.nextElementSibling; 
+            if (detailsContent && detailsContent.classList.contains('details-content')) { 
+                detailsContent.classList.toggle('open'); 
+            } 
+        }
+
+        // Main Logic Functions
+        function renderGroups(groups) {
+            const maxCount = Math.max(1, ...groups.map(g => g.occurrence_count));
+            activeIssuesList.innerHTML = '';
+            nonIssuesList.innerHTML = '';
+
+            groups.forEach(group => {
+                const card = errorCardTemplate.content.cloneNode(true).firstElementChild;
+                card.dataset.groupId = group.id;
+                card.dataset.status = group.status;
+
+                card.querySelector('.summary').textContent = group.analysis_report?.summary || group.representative_signature || 'No summary available.';
+                card.querySelector('.grouping-method').textContent = group.grouping_method;
+                
+                card.querySelector('.risk-score-container').appendChild(createRiskScoreRing(group.risk_score));
+                
+                const bubble = card.querySelector('.occurrence-bubble');
+                bubble.style.cssText = getBubbleStyle(group.occurrence_count, maxCount);
+                card.querySelector('.occurrence-count').textContent = group.occurrence_count;
+                
+                const sparklineContainer = card.querySelector('.sparkline-container');
+                if (group.trend && group.trend.length > 1) {
+                    sparklineContainer.appendChild(createSparkline(group.trend));
+                }
+
+                card.querySelector('.last-seen').textContent = new Date(group.last_seen).toLocaleString();
+                const statusBadge = card.querySelector('.status-badge');
+                statusBadge.textContent = group.status;
+                statusBadge.className = 'status-badge text-xs font-medium mr-2 px-2.5 py-0.5 rounded-full ' + (statusStyles[group.status] || 'bg-gray-700 text-gray-400');
+                
+                card.querySelector('.original-log').textContent = group.representative_signature;
+
+                if (group.analysis_report) {
+                    card.querySelector('.root-cause').textContent = group.analysis_report.root_cause || 'No analysis available';
+                    card.querySelector('.impact').textContent = group.analysis_report.impact || 'No impact analysis available';
+                    const solutionList = card.querySelector('.solution');
+                    solutionList.innerHTML = '';
+                    (group.analysis_report.solution || []).forEach(step => {
+                        const li = document.createElement('li');
+                        li.textContent = step;
+                        solutionList.appendChild(li);
+                    });
+                } else {
+                    card.querySelector('.root-cause').parentElement.style.display = 'none';
+                    card.querySelector('.impact').parentElement.style.display = 'none';
+                    card.querySelector('.solution').parentElement.style.display = 'none';
+                }
+
+                const toggle = card.querySelector('.non-issue-toggle');
+                toggle.checked = group.status === 'NON_ISSUE';
+                updateToggleVisual(toggle);
+
+                if (group.status === 'NON_ISSUE') {
+                    nonIssuesList.appendChild(card);
+                } else {
+                    activeIssuesList.appendChild(card);
+                }
+            });
+        }
+
+        function applyFiltersAndSort() {
+            let filtered = [...allGroups];
+
+            const start = startDateFilter.value ? new Date(startDateFilter.value) : null;
+            const end = endDateFilter.value ? new Date(endDateFilter.value) : null;
+            if (start || end) {
+                filtered = filtered.filter(g => {
+                    const seen = new Date(g.last_seen);
+                    if (start && seen < start) return false;
+                    if (end && seen > end) return false;
+                    return true;
+                });
+            }
+
+            const sortBy = sortBySelect.value;
+            filtered.sort((a, b) => {
+                if (sortBy === 'last_seen') return new Date(b.last_seen) - new Date(a.last_seen);
+                return b[sortBy] - a[sortBy];
+            });
+
+            renderGroups(filtered);
+        }
+
+        function setupEventListeners() {
+            tabsContainer.addEventListener('click', (e) => {
+                if (e.target.classList.contains('tab')) {
+                    document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+                    e.target.classList.add('active');
+                    activeIssuesList.classList.toggle('hidden', e.target.dataset.tab !== 'active-issues');
+                    nonIssuesList.classList.toggle('hidden', e.target.dataset.tab !== 'non-issues');
+                }
+            });
+
+            [startDateFilter, endDateFilter, sortBySelect].forEach(el => el.addEventListener('change', applyFiltersAndSort));
+
+            dateQuickFilters.addEventListener('click', (e) => {
+                if (e.target.tagName === 'BUTTON') {
+                    const hours = parseInt(e.target.dataset.hours, 10);
+                    const now = new Date();
+                    const start = new Date(now.getTime() - hours * 60 * 60 * 1000);
+                    startDateFilter.value = start.toISOString().slice(0, 16);
+                    endDateFilter.value = now.toISOString().slice(0, 16);
+                    applyFiltersAndSort();
+                }
+            });
+
+            dateResetBtn.addEventListener('click', () => {
+                startDateFilter.value = '';
+                endDateFilter.value = '';
+                applyFiltersAndSort();
+            });
+            
+            triggerPipelineBtn.addEventListener('click', triggerPipeline);
+        }
+
+        async function loadGroups() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/groups`);
+                allGroups = await response.json();
+                applyFiltersAndSort();
+            } catch (error) {
+                console.error('Error loading groups:', error);
+            }
+        }
+
+        async function loadPipelineStatus() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/pipeline-status`);
+                const status = await response.json();
+                updatePipelineUI(status.stage, status.status);
+                lastUpdatedEl.textContent = new Date().toLocaleTimeString();
+            } catch (error) {
+                console.error('Error loading pipeline status:', error);
+            }
+        }
+
+        async function handleNonIssueToggle(toggle) { 
+            const card = toggle.closest('[data-group-id]'); 
+            const groupId = card.dataset.groupId; 
+            const isNonIssue = toggle.checked; 
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/groups/${groupId}/toggle-non-issue`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_non_issue: isNonIssue })
+                });
+                
+                if (response.ok) {
+                    updateToggleVisual(toggle);
+                    setTimeout(() => loadGroups(), 500);
+                } else {
+                    toggle.checked = !isNonIssue;
+                }
+            } catch (error) {
+                console.error('Error toggling non-issue status:', error);
+                toggle.checked = !isNonIssue;
+            }
+        }
+        
+        // Pipeline UI Functions
+        function resetPipelineUI() { 
+            Object.values(pipelineSteps).forEach(step => step.className = 'step'); 
+            progressBar.style.width = '0%'; 
+            updateStatus('Pipeline Idle', 'green'); 
+        }
+
+        function updatePipelineUI(stage, status) { 
+            if (status === 'idle') {
+                resetPipelineUI();
+                return;
+            }
+            
+            const config = pipelineStageConfig[stage];
+            if (!config) return;
+            
+            updateStatus(config.text, 'yellow'); 
+            progressBar.style.width = `${config.progress}%`; 
+            
+            let completed = true; 
+            for (const key in pipelineSteps) { 
+                const stepEl = pipelineSteps[key]; 
+                if (completed) stepEl.classList.add('completed'); 
+                if (key === config.step) { 
+                    stepEl.classList.remove('completed'); 
+                    stepEl.classList.add('active'); 
+                    completed = false; 
+                } 
+            } 
+            
+            if (stage === 'DONE') { 
+                Object.values(pipelineSteps).forEach(step => step.classList.add('completed')); 
+                updateStatus(config.text, 'green'); 
+            } 
+        }
+
+        function updateStatus(message, color) { 
+            currentStatusEl.textContent = message; 
+            statusIndicator.className = 'w-4 h-4 rounded-full'; 
+            statusIndicator.classList.add(`bg-${color}-500`); 
+            if (color === 'yellow') { 
+                statusIndicator.classList.add('animate-pulse'); 
+            } 
+        }
+
+        async function triggerPipeline() { 
+            triggerPipelineBtn.disabled = true; 
+            triggerPipelineBtn.textContent = 'Triggering...'; 
+            
+            try { 
+                await fetch(`${API_BASE_URL}/trigger-pipeline`, { method: 'POST' }); 
+            } catch (error) { 
+                console.error('Error triggering pipeline:', error); 
+            } finally { 
+                triggerPipelineBtn.textContent = 'Manual Trigger Pipeline'; 
+                triggerPipelineBtn.disabled = false;
+            } 
+        }
+        
+        // Initialize
+        async function initializeDashboard() {
+            setupEventListeners();
+            await loadGroups();
+            await loadPipelineStatus();
+            
+            // Poll for updates every 5 seconds
+            setInterval(async () => {
+                await loadGroups();
+                await loadPipelineStatus();
+            }, 5000);
+        }
+
+        initializeDashboard();
+    </script>
+</body>
+</html>
