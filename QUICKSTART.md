@@ -67,7 +67,27 @@ curl -X POST http://localhost:8000/api/groups/1/toggle-non-issue \
 
 ## 7. Customization
 
-### Add Your Own Logs
+### Connect to NELO API
+Edit `.env` file to enable NELO integration:
+```bash
+# Change log source to NELO
+LOG_SOURCE_TYPE=nelo
+
+# Configure NELO API (your actual keys)
+NELO_ACCESS_KEY=your_actual_access_key
+NELO_SECRET_KEY=your_actual_secret_key
+NELO_GROUP_ID=6370
+
+# Optional: Adjust pipeline interval
+PIPELINE_INTERVAL_SECONDS=300
+```
+
+The system will automatically:
+- Fetch error logs from NELO every pipeline run
+- Fallback to sample data if NELO is unavailable
+- Show NELO connection status in the dashboard
+
+### Add Your Own Sample Logs
 Edit `sample_logs.json` with your log format:
 ```json
 {

@@ -53,7 +53,19 @@ cp .env.example .env
 ```
 
 ### 로그 소스 설정
-기본적으로 `sample_logs.json` 파일을 사용하며, `LOG_SOURCE_PATH` 환경 변수로 변경 가능
+**NELO API 연동** (권장):
+```bash
+LOG_SOURCE_TYPE=nelo
+NELO_ACCESS_KEY=your_access_key
+NELO_SECRET_KEY=your_secret_key
+NELO_GROUP_ID=6370
+```
+
+**파일 기반 로그**:
+```bash
+LOG_SOURCE_TYPE=file
+LOG_SOURCE_PATH=sample_logs.json
+```
 
 ### AI API 설정 (선택사항)
 현재 더미 응답을 사용하며, 실제 AI API 사용 시:

@@ -4,7 +4,9 @@
       "Bash(chmod:*)",
       "Bash(pip install:*)",
       "Bash(timeout:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(curl:*)",
+      "Bash(pkill:*)"
     ],
     "deny": []
   }
