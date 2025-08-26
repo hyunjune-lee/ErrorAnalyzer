@@ -14,8 +14,8 @@ def fetch_logs() -> List[Dict[str, Any]]:
         logger.info("Fetching logs from NELO API")
         return fetch_from_nelo()
     else:
-        logger.info("Fetching logs from file")
-        return fetch_from_file()
+        logger.warning(f"Log source type is set to '{settings.log_source_type}', but only 'nelo' is supported now.")
+        return []
 
 def fetch_from_nelo() -> List[Dict[str, Any]]:
     """NELO API에서 로그를 가져옵니다."""
@@ -26,27 +26,4 @@ def fetch_from_nelo() -> List[Dict[str, Any]]:
         return logs
     except Exception as e:
         logger.error(f"Error fetching from NELO: {e}")
-        logger.info("Falling back to sample logs")
-        return fetch_from_file()
-
-def fetch_from_file() -> List[Dict[str, Any]]:
-    """파일에서 로그를 가져옵니다."""
-    try:
-        if not os.path.exists(settings.log_source_path):
-            logger.warning(f"Log source file not found: {settings.log_source_path}")
-            return []
-        
-        with open(settings.log_source_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        if isinstance(data, list):
-            return data
-        elif isinstance(data, dict) and 'logs' in data:
-            return data['logs']
-        else:
-            logger.error("Invalid log file format. Expected list or object with 'logs' key.")
-            return []
-    
-    except Exception as e:
-        logger.error(f"Error reading log file: {e}")
         return []

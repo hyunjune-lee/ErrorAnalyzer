@@ -14,7 +14,7 @@ class NeloClient:
         self.group_id = settings.nelo_group_id
 
         if not self.access_key or not self.secret_key:
-            logger.warning("NELO API keys not configured. Using sample logs instead.")
+            logger.warning("NELO API keys not configured. The application will not be able to fetch logs from NELO.")
 
     def get_headers(self) -> Dict[str, str]:
         return {
@@ -26,8 +26,8 @@ class NeloClient:
     def fetch_error_logs(self, minutes_back: int = 5) -> List[Dict[str, Any]]:
         """NELO API에서 최근 에러 로그들을 가져옵니다."""
         if not self.access_key or not self.secret_key:
-            logger.warning("NELO credentials not available, using Mock client")
-            return self._use_mock_client(minutes_back)
+            logger.warning("NELO credentials not available. Cannot fetch logs.")
+            return []
 
         try:
             end_time = datetime.now()
@@ -64,21 +64,17 @@ class NeloClient:
                 return self.normalize_nelo_logs(logs)
             elif response.status_code == 401:
                 logger.error(f"NELO API authentication failed: {response.text}")
-                logger.info("Falling back to Mock NELO client")
-                return self._use_mock_client(minutes_back)
+                return []
             else:
                 logger.error(f"NELO API error: {response.status_code} - {response.text}")
-                logger.info("Falling back to Mock NELO client")
-                return self._use_mock_client(minutes_back)
+                return []
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Network error while fetching NELO logs: {e}")
-            logger.info("Falling back to Mock NELO client")
-            return self._use_mock_client(minutes_back)
+            return []
         except Exception as e:
             logger.error(f"Unexpected error while fetching NELO logs: {e}")
-            logger.info("Falling back to Mock NELO client")
-            return self._use_mock_client(minutes_back)
+            return []
 
     def normalize_nelo_logs(self, nelo_logs: List[Dict]) -> List[Dict[str, Any]]:
         """NELO 로그 포맷을 내부 포맷으로 변환합니다."""
@@ -122,12 +118,3 @@ class NeloClient:
         logger.info(f"Normalized {len(normalized_logs)} NELO logs")
         return normalized_logs
 
-    def _use_mock_client(self, minutes_back: int) -> List[Dict[str, Any]]:
-        """Mock NELO 클라이언트를 사용합니다."""
-        try:
-            from app.services.mock_nelo_client import MockNeloClient
-            mock_client = MockNeloClient()
-            return mock_client.fetch_error_logs(minutes_back)
-        except ImportError:
-            logger.error("Mock NELO client not available")
-            return []
