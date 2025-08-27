@@ -7,10 +7,13 @@ NELO Mock, 파이프라인, UI 등 모든 기능을 테스트합니다.
 import time
 import requests
 from datetime import datetime
-from unittest.mock import patch
+import requests
+from unittest.mock import patch, MagicMock
 from app.main import app
 from app.config import settings
 from fastapi.testclient import TestClient
+from app.database.models import init_db
+from app.database.connection import engine
 
 MOCK_LOG_DATA = [
     {
@@ -70,8 +73,16 @@ def test_pipeline_execution():
     """파이프라인 실행 테스트"""
     print("\n⚙️  === Pipeline Execution Test ===")
     
-    with patch.object(settings, 'log_source_type', 'nelo'), \
-         patch('app.services.ingestion_service.fetch_from_nelo', return_value=MOCK_LOG_DATA):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = MOCK_LOG_DATA
+
+    with patch('requests.get', return_value=mock_response), \
+         patch.object(settings, 'log_source_type', 'nelo'), \
+         patch.object(settings, 'nelo_access_key', 'test-key'), \
+         patch.object(settings, 'nelo_secret_key', 'test-secret'):
+
+        init_db(engine)
         client = TestClient(app)
         
         # 파이프라인 상태 확인
@@ -110,6 +121,18 @@ def test_pipeline_execution():
                     print(f"    - Grouping methods: {dict(methods)}")
             else:
                 print(f"  ❌ Failed to get groups: {groups_response.status_code}")
+
+            # Check fetch history
+            history_response = client.get("/api/fetch-history")
+            if history_response.status_code == 200:
+                history = history_response.json()
+                print(f"  📖 Fetch history contains {len(history)} records")
+                if len(history) > 0:
+                    print("    ✅ Fetch history is not empty")
+                else:
+                    print("    ❌ Fetch history is empty")
+            else:
+                print(f"  ❌ Failed to get fetch history: {history_response.status_code}")
         else:
             print(f"  ❌ Failed to trigger pipeline: {trigger_response.status_code}")
 
