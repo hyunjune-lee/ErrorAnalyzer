@@ -49,6 +49,15 @@ class ErrorGroupSchema(BaseModel):
     class Config: 
         from_attributes = True
 
+class FetchHistorySchema(BaseModel):
+    id: int
+    start_time: datetime
+    end_time: datetime
+    log_count: int
+
+    class Config:
+        from_attributes = True
+
 class ToggleNonIssueRequest(BaseModel):
     is_non_issue: bool
 
@@ -142,6 +151,12 @@ def get_error_groups(db: Session = Depends(get_db)):
         group.sample_log = sample_log.raw_data if sample_log else None
     
     return groups
+
+@app.get("/api/fetch-history", response_model=List[FetchHistorySchema])
+def get_fetch_history(db: Session = Depends(get_db)):
+    from app.database.models import FetchHistory
+    history = db.query(FetchHistory).order_by(FetchHistory.start_time.desc()).limit(100).all()
+    return history
 
 @app.post("/api/groups/{group_id}/toggle-non-issue", response_model=ErrorGroupSchema)
 def toggle_non_issue_status(group_id: int, request: ToggleNonIssueRequest, db: Session = Depends(get_db)):

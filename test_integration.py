@@ -7,8 +7,43 @@ NELO Mock, 파이프라인, UI 등 모든 기능을 테스트합니다.
 import time
 import requests
 from datetime import datetime
+import requests
+from unittest.mock import patch, MagicMock
 from app.main import app
+from app.config import settings
 from fastapi.testclient import TestClient
+from app.database.models import init_db
+from app.database.connection import engine
+
+MOCK_LOG_DATA = [
+    {
+        "timestamp": datetime.now().isoformat(),
+        "logLevel": "ERROR",
+        "logger": "com.naver.chat.service.MessageService.sendMessage:124",
+        "application": "OpenChat-API",
+        "projectName": "OpenChat-API",
+        "body": "java.lang.NullPointerException: Cannot invoke method on null object",
+        "stackTrace": [
+            "java.lang.NullPointerException",
+            "at com.naver.chat.service.MessageService.sendMessage(MessageService.java:124)",
+            "at com.naver.chat.controller.MessageController.send(MessageController.java:45)"
+        ],
+        "metadata": {}
+    },
+    {
+        "timestamp": datetime.now().isoformat(),
+        "logLevel": "ERROR",
+        "logger": "com.naver.chat.database.ConnectionPool.getConnection:89",
+        "application": "OpenChat-API",
+        "projectName": "OpenChat-API",
+        "body": "Database connection timeout after 30000ms",
+        "stackTrace": [
+            "java.sql.SQLException: Connection timeout",
+            "at com.zaxxer.hikari.pool.HikariPool.getConnection(HikariPool.java:181)"
+        ],
+        "metadata": {}
+    }
+]
 
 def test_endpoints():
     """모든 API 엔드포인트 테스트"""
@@ -33,76 +68,73 @@ def test_endpoints():
         except Exception as e:
             print(f"  ❌ {description}: Error - {e}")
 
-def test_nelo_integration():
-    """NELO 통합 테스트 (Mock 포함)"""
-    print("\n🤖 === NELO Integration Test ===")
-    
-    from app.services.nelo_client import NeloClient
-    
-    client = NeloClient()
-    
-    print(f"  📡 NELO Group ID: {client.group_id}")
-    print(f"  🔑 API Key configured: {bool(client.access_key)}")
-    
-    # 다양한 시간 범위로 테스트
-    for minutes in [1, 5, 15]:
-        print(f"\n  ⏱️  Testing {minutes} minutes range:")
-        try:
-            logs = client.fetch_error_logs(minutes_back=minutes)
-            print(f"    ✅ Fetched {len(logs)} logs")
-            
-            if logs:
-                projects = set(log.get('projectName', 'Unknown') for log in logs)
-                print(f"    📊 Projects: {', '.join(projects)}")
-                break
-                
-        except Exception as e:
-            print(f"    ❌ Error: {e}")
 
 def test_pipeline_execution():
     """파이프라인 실행 테스트"""
     print("\n⚙️  === Pipeline Execution Test ===")
     
-    client = TestClient(app)
-    
-    # 파이프라인 상태 확인
-    status_response = client.get("/api/pipeline-status")
-    if status_response.status_code == 200:
-        status = status_response.json()
-        print(f"  📊 Initial status: {status['status']}")
-    
-    # 파이프라인 실행
-    print("  🚀 Triggering pipeline...")
-    trigger_response = client.post("/trigger-pipeline")
-    
-    if trigger_response.status_code == 200:
-        print(f"  ✅ Pipeline triggered: {trigger_response.json()['message']}")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = MOCK_LOG_DATA
+
+    with patch('requests.get', return_value=mock_response), \
+         patch.object(settings, 'log_source_type', 'nelo'), \
+         patch.object(settings, 'nelo_access_key', 'test-key'), \
+         patch.object(settings, 'nelo_secret_key', 'test-secret'):
+
+        init_db(engine)
+        client = TestClient(app)
         
-        # 잠시 대기
-        time.sleep(3)
+        # 파이프라인 상태 확인
+        status_response = client.get("/api/pipeline-status")
+        if status_response.status_code == 200:
+            status = status_response.json()
+            print(f"  📊 Initial status: {status['status']}")
         
-        # 결과 확인
-        groups_response = client.get("/api/groups")
-        if groups_response.status_code == 200:
-            groups = groups_response.json()
-            print(f"  📈 Results: {len(groups)} error groups created")
+        # 파이프라인 실행
+        print("  🚀 Triggering pipeline...")
+        trigger_response = client.post("/trigger-pipeline")
+
+        if trigger_response.status_code == 200:
+            print(f"  ✅ Pipeline triggered: {trigger_response.json()['message']}")
             
-            if groups:
-                analyzed = sum(1 for g in groups if g['status'] == 'ANALYZED')
-                print(f"    - Analyzed groups: {analyzed}")
+            # 잠시 대기
+            time.sleep(3)
+
+            # 결과 확인
+            groups_response = client.get("/api/groups")
+            if groups_response.status_code == 200:
+                groups = groups_response.json()
+                print(f"  📈 Results: {len(groups)} error groups created")
                 
-                avg_risk = sum(g['risk_score'] for g in groups) / len(groups)
-                print(f"    - Average risk score: {avg_risk:.1f}")
-                
-                methods = {}
-                for g in groups:
-                    method = g['grouping_method']
-                    methods[method] = methods.get(method, 0) + 1
-                print(f"    - Grouping methods: {dict(methods)}")
+                if groups:
+                    analyzed = sum(1 for g in groups if g['status'] == 'ANALYZED')
+                    print(f"    - Analyzed groups: {analyzed}")
+
+                    avg_risk = sum(g['risk_score'] for g in groups) / len(groups)
+                    print(f"    - Average risk score: {avg_risk:.1f}")
+
+                    methods = {}
+                    for g in groups:
+                        method = g['grouping_method']
+                        methods[method] = methods.get(method, 0) + 1
+                    print(f"    - Grouping methods: {dict(methods)}")
+            else:
+                print(f"  ❌ Failed to get groups: {groups_response.status_code}")
+
+            # Check fetch history
+            history_response = client.get("/api/fetch-history")
+            if history_response.status_code == 200:
+                history = history_response.json()
+                print(f"  📖 Fetch history contains {len(history)} records")
+                if len(history) > 0:
+                    print("    ✅ Fetch history is not empty")
+                else:
+                    print("    ❌ Fetch history is empty")
+            else:
+                print(f"  ❌ Failed to get fetch history: {history_response.status_code}")
         else:
-            print(f"  ❌ Failed to get groups: {groups_response.status_code}")
-    else:
-        print(f"  ❌ Failed to trigger pipeline: {trigger_response.status_code}")
+            print(f"  ❌ Failed to trigger pipeline: {trigger_response.status_code}")
 
 def test_ui_features():
     """UI 기능 테스트"""
@@ -183,13 +215,13 @@ def test_toggle_functionality():
 
 def main():
     """메인 테스트 실행"""
+
     print("🧪 === Error Analyzer PoC - Full Integration Test ===")
     print(f"⏰ Test started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
     
     # 모든 테스트 실행
     test_endpoints()
-    test_nelo_integration()
     test_pipeline_execution()
     test_ui_features()
     test_toggle_functionality()

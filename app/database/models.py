@@ -48,5 +48,14 @@ class AnalysisReport(Base):
 
     group = relationship("ErrorGroup", back_populates="analysis_report")
 
+
+class FetchHistory(Base):
+    __tablename__ = 'fetch_history'
+    id = Column(Integer, primary_key=True)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    log_count = Column(Integer, default=0)
+
+
 def init_db(engine):
     Base.metadata.create_all(bind=engine)

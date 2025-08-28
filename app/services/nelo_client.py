@@ -2,7 +2,9 @@ import requests
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
 from app.config import settings
+from app.database.models import FetchHistory
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +16,7 @@ class NeloClient:
         self.group_id = settings.nelo_group_id
 
         if not self.access_key or not self.secret_key:
-            logger.warning("NELO API keys not configured. Using sample logs instead.")
+            logger.warning("NELO API keys not configured. The application will not be able to fetch logs from NELO.")
 
     def get_headers(self) -> Dict[str, str]:
         return {
@@ -23,27 +25,39 @@ class NeloClient:
             "Content-Type": "application/json"
         }
 
-    def fetch_error_logs(self, minutes_back: int = 5) -> List[Dict[str, Any]]:
+    def fetch_error_logs(self, db: Session, minutes_back: int = 5) -> List[Dict[str, Any]]:
         """NELO API에서 최근 에러 로그들을 가져옵니다."""
         if not self.access_key or not self.secret_key:
-            logger.warning("NELO credentials not available, using Mock client")
-            return self._use_mock_client(minutes_back)
+            logger.warning("NELO credentials not available. Cannot fetch logs.")
+            return []
 
         try:
+            last_fetch = db.query(FetchHistory).order_by(FetchHistory.end_time.desc()).first()
+
             end_time = datetime.now()
-            start_time = end_time - timedelta(minutes=minutes_back)
+            if last_fetch:
+                start_time = last_fetch.end_time
+            else:
+                start_time = end_time - timedelta(days=1)
+
+            # To avoid fetching logs from the exact same millisecond
+            start_time += timedelta(milliseconds=1)
 
             # Unix timestamp in milliseconds
             from_time = int(start_time.timestamp() * 1000)
             to_time = int(end_time.timestamp() * 1000)
+
+            if from_time >= to_time:
+                logger.info("No new time range to fetch. Skipping.")
+                return []
 
             params = {
                 "dataSource.groupId": self.group_id,
                 "query": "logLevel:ERROR",
                 "fields": "logTime,logLevel,body,Location,clientIp,host,userId,projectName,url,requestId,logType,Exception,errorCode,Referrer",
                 "format": "json",
-                "count": "100",
-                "limit": "100",
+                "count": "10000", # Increased limit
+                "limit": "10000",
                 "compression": "false",
                 "from": from_time,
                 "to": to_time
@@ -55,30 +69,35 @@ class NeloClient:
                 self.api_url,
                 headers=self.get_headers(),
                 params=params,
-                timeout=30
+                timeout=60 # Increased timeout
             )
 
             if response.status_code == 200:
                 logs = response.json()
                 logger.info(f"Successfully fetched {len(logs)} logs from NELO")
+
+                new_fetch_record = FetchHistory(
+                    start_time=start_time,
+                    end_time=end_time,
+                    log_count=len(logs)
+                )
+                db.add(new_fetch_record)
+                db.commit()
+
                 return self.normalize_nelo_logs(logs)
             elif response.status_code == 401:
                 logger.error(f"NELO API authentication failed: {response.text}")
-                logger.info("Falling back to Mock NELO client")
-                return self._use_mock_client(minutes_back)
+                db.rollback()
+                return []
             else:
                 logger.error(f"NELO API error: {response.status_code} - {response.text}")
-                logger.info("Falling back to Mock NELO client")
-                return self._use_mock_client(minutes_back)
+                db.rollback()
+                return []
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Network error while fetching NELO logs: {e}")
-            logger.info("Falling back to Mock NELO client")
-            return self._use_mock_client(minutes_back)
         except Exception as e:
             logger.error(f"Unexpected error while fetching NELO logs: {e}")
-            logger.info("Falling back to Mock NELO client")
-            return self._use_mock_client(minutes_back)
+            db.rollback()
+            return []
 
     def normalize_nelo_logs(self, nelo_logs: List[Dict]) -> List[Dict[str, Any]]:
         """NELO 로그 포맷을 내부 포맷으로 변환합니다."""
@@ -122,12 +141,3 @@ class NeloClient:
         logger.info(f"Normalized {len(normalized_logs)} NELO logs")
         return normalized_logs
 
-    def _use_mock_client(self, minutes_back: int) -> List[Dict[str, Any]]:
-        """Mock NELO 클라이언트를 사용합니다."""
-        try:
-            from app.services.mock_nelo_client import MockNeloClient
-            mock_client = MockNeloClient()
-            return mock_client.fetch_error_logs(minutes_back)
-        except ImportError:
-            logger.error("Mock NELO client not available")
-            return []

@@ -26,7 +26,7 @@ def run_analysis_pipeline(db: Session, executor: ThreadPoolExecutor, status: Pip
         status.stage = "FETCHING_LOGS"
         status.progress = 20
         logger.info("--- Starting Analysis Pipeline: Fetching Logs ---")
-        logs = fetch_logs()
+        logs = fetch_logs(db)
         if not logs:
             logger.info("--- Pipeline Finished. No logs found. ---")
             return

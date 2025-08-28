@@ -52,6 +52,14 @@
             </div>
         </div>
 
+        <!-- Fetch History Card -->
+        <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
+            <h2 class="text-xl font-semibold text-white mb-3">Log Fetch History</h2>
+            <div id="fetch-history-list" class="space-y-2 max-h-48 overflow-y-auto">
+                <!-- History items will be injected here -->
+            </div>
+        </div>
+
         <div class="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
             <div class="bg-gray-800 p-6 rounded-lg shadow-lg col-span-1 md:col-span-3">
                 <h2 class="text-xl font-semibold text-white mb-3">Pipeline Status</h2>
@@ -293,7 +301,11 @@
                 card.dataset.groupId = group.id;
                 card.dataset.status = group.status;
 
-                card.querySelector('.summary').textContent = group.analysis_report?.summary || group.representative_signature || 'No summary available.';
+                const summaryText = group.analysis_report?.summary ||
+                                  (group.sample_log && (group.sample_log.body || group.sample_log.message)) ||
+                                  group.representative_signature ||
+                                  'No summary available.';
+                card.querySelector('.summary').textContent = summaryText;
                 card.querySelector('.grouping-method').textContent = group.grouping_method;
                 
                 card.querySelector('.risk-score-container').appendChild(createRiskScoreRing(group.risk_score));
@@ -361,9 +373,23 @@
                         solutionList.appendChild(li);
                     });
                 } else {
-                    card.querySelector('.root-cause').parentElement.style.display = 'none';
-                    card.querySelector('.impact').parentElement.style.display = 'none';
-                    card.querySelector('.solution').parentElement.style.display = 'none';
+                    const rootCauseEl = card.querySelector('.root-cause');
+                    const impactEl = card.querySelector('.impact');
+                    const solutionList = card.querySelector('.solution');
+
+                    rootCauseEl.parentElement.style.display = 'block';
+                    impactEl.parentElement.style.display = 'block';
+                    solutionList.parentElement.style.display = 'block';
+
+                    rootCauseEl.textContent = 'AI analysis has not been performed. The following information is derived from log data.';
+
+                    impactEl.textContent = 'A log template (via Drain algorithm) has been identified for this group:';
+                    const pre = document.createElement('pre');
+                    pre.className = 'log-viewer mt-2';
+                    pre.innerHTML = `<code>${group.representative_signature}</code>`;
+                    impactEl.after(pre);
+
+                    solutionList.innerHTML = '<li>Review the "Original Log Details" and "Stack Trace" sections below for further investigation.</li>';
                 }
 
                 const toggle = card.querySelector('.non-issue-toggle');
@@ -444,6 +470,7 @@
             document.getElementById('refresh-data-btn').addEventListener('click', async () => {
                 await loadGroups();
                 await loadPipelineStatus();
+                await loadFetchHistory();
             });
             
             // Auto-refresh toggle
@@ -547,6 +574,35 @@
             }
         }
         
+        async function loadFetchHistory() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/fetch-history`);
+                const history = await response.json();
+                const listEl = document.getElementById('fetch-history-list');
+                listEl.innerHTML = '';
+
+                if (history.length === 0) {
+                    listEl.innerHTML = '<p class="text-gray-400">No fetch history yet.</p>';
+                    return;
+                }
+
+                history.forEach(item => {
+                    const itemEl = document.createElement('div');
+                    itemEl.className = 'text-sm text-gray-300 flex justify-between';
+                    const startTime = new Date(item.start_time).toLocaleString();
+                    const endTime = new Date(item.end_time).toLocaleString();
+                    itemEl.innerHTML = `
+                        <span>${startTime} &rarr; ${endTime}</span>
+                        <span class="font-mono bg-gray-700 px-2 py-1 rounded-md text-xs">${item.log_count} logs</span>
+                    `;
+                    listEl.appendChild(itemEl);
+                });
+            } catch (error) {
+                console.error('Error loading fetch history:', error);
+                document.getElementById('fetch-history-list').innerHTML = '<p class="text-red-400">Could not load fetch history.</p>';
+            }
+        }
+
         // Pipeline UI Functions
         function resetPipelineUI() { 
             Object.values(pipelineSteps).forEach(step => step.className = 'step'); 
@@ -629,6 +685,7 @@
             await loadSystemStatus();
             await loadGroups();
             await loadPipelineStatus();
+            await loadFetchHistory();
             
             // Start auto-refresh if enabled
             if (autoRefreshEnabled) {
